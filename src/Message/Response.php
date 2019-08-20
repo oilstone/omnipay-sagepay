@@ -4,9 +4,8 @@ namespace Omnipay\SagePay\Message;
 
 use Omnipay\Common\Message\AbstractResponse;
 use Omnipay\Common\Message\RedirectResponseInterface;
-use Omnipay\Common\Message\RequestInterface;
-use Omnipay\SagePay\Traits\ResponseFieldsTrait;
 use Omnipay\SagePay\ConstantsInterface;
+use Omnipay\SagePay\Traits\ResponseFieldsTrait;
 
 /**
  * Sage Pay Response
@@ -43,7 +42,7 @@ class Response extends AbstractResponse implements RedirectResponseInterface, Co
         // The reference is null if we have no transaction details.
 
         if (empty($reference)) {
-            return;
+            return null;
         }
 
         // Remaining transaction details supplied by the merchant site
@@ -66,7 +65,7 @@ class Response extends AbstractResponse implements RedirectResponseInterface, Co
      */
     public function isRedirect()
     {
-        return $this->getStatus() === static::SAGEPAY_STATUS_3DAUTH;
+        return $this->getStatus() === static::SAGEPAY_STATUS_3DAUTH || $this->getStatus() === static::SAGEPAY_STATUS_PPREDIRECT;
     }
 
     /**
@@ -74,9 +73,15 @@ class Response extends AbstractResponse implements RedirectResponseInterface, Co
      */
     public function getRedirectUrl()
     {
-        if ($this->isRedirect()) {
-            return $this->getDataItem('ACSURL');
+        if (!$this->isRedirect()) {
+            return null;
         }
+
+        if ($this->getStatus() === static::SAGEPAY_STATUS_PPREDIRECT) {
+            return $this->getDataItem('PayPalRedirectURL');
+        }
+
+        return $this->getDataItem('ACSURL');
     }
 
     /**
@@ -84,7 +89,16 @@ class Response extends AbstractResponse implements RedirectResponseInterface, Co
      */
     public function getRedirectMethod()
     {
+        if (!$this->isRedirect()) {
+            return null;
+        }
+
+        if ($this->getStatus() === static::SAGEPAY_STATUS_PPREDIRECT) {
+            return 'GET';
+        }
+
         return 'POST';
+
     }
 
     /**
@@ -95,13 +109,22 @@ class Response extends AbstractResponse implements RedirectResponseInterface, Co
      */
     public function getRedirectData()
     {
-        if ($this->isRedirect()) {
-            return array(
-                'PaReq' => $this->getDataItem('PAReq'),
-                'TermUrl' => $this->getRequest()->getReturnUrl(),
-                'MD' => $this->getDataItem('MD'),
-            );
+        if (!$this->isRedirect()) {
+            return null;
         }
+
+        if ($this->getStatus() === static::SAGEPAY_STATUS_PPREDIRECT) {
+            return array();
+        }
+
+        /** @var AbstractRequest $request */
+        $request = $this->getRequest();
+
+        return array(
+            'PaReq' => $this->getDataItem('PAReq'),
+            'TermUrl' => $request->getReturnUrl(),
+            'MD' => $this->getDataItem('MD'),
+        );
     }
 
     /**

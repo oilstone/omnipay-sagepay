@@ -2,6 +2,9 @@
 
 namespace Omnipay\SagePay\Traits;
 
+use DateTime;
+use Omnipay\SagePay\Message\AbstractRequest;
+
 /**
  * Response fields shared between the Direct/Server response class and
  * the notification handler.
@@ -18,8 +21,6 @@ trait ResponseFieldsTrait
      */
     protected function getDataItem($name, $default = null)
     {
-        $data = $this->getData();
-
         return isset($this->data[$name]) ? $this->data[$name] : $default;
     }
 
@@ -31,7 +32,8 @@ trait ResponseFieldsTrait
         return $this->getStatus() === static::SAGEPAY_STATUS_OK
             || $this->getStatus() === static::SAGEPAY_STATUS_OK_REPEATED
             || $this->getStatus() === static::SAGEPAY_STATUS_REGISTERED
-            || $this->getStatus() === static::SAGEPAY_STATUS_AUTHENTICATED;
+            || $this->getStatus() === static::SAGEPAY_STATUS_AUTHENTICATED
+            || $this->getStatus() === static::SAGEPAY_STATUS_PAYPALOK;
     }
 
     /**
@@ -248,6 +250,8 @@ trait ResponseFieldsTrait
         if (! empty($expiryDate)) {
             return (int)substr($expiryDate, 0, 2);
         }
+
+        return null;
     }
 
     /**
@@ -260,21 +264,23 @@ trait ResponseFieldsTrait
         $expiryDate = $this->getDataItem('ExpiryDate');
 
         if (! empty($expiryDate)) {
-            // COnvert 2-digit year to 4-dogot year, in 1970-2069 range.
-            $dateTime = \DateTime::createFromFormat('y', substr($expiryDate, 2, 2));
+            // Convert 2-digit year to 4-digit year, in 1970-2069 range.
+            $dateTime = DateTime::createFromFormat('y', substr($expiryDate, 2, 2));
             return (int)$dateTime->format('Y');
         }
+
+        return null;
     }
 
     /**
      * The transaction ID will be returned in the data for the Form API, or
      * we will have to refer to the request for the Server and Direct APIs.
-     *
-     * @return @inherit
      */
     public function getTransactionId()
     {
-        return $this->getDataItem('VendorTxCode')
-            ?: $this->getRequest()->getTransactionId();
+        /** @var AbstractRequest $request */
+        $request = $this->getRequest();
+
+        return $this->getDataItem('VendorTxCode') ?: $request->getTransactionId();
     }
 }

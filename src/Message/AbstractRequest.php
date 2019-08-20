@@ -6,12 +6,14 @@ namespace Omnipay\SagePay\Message;
  * Sage Pay Abstract Request.
  * Base for Sage Pay Server and Sage Pay Direct.
  */
+
 use Omnipay\Common\Exception\InvalidRequestException;
-use Omnipay\SagePay\Extend\Item as ExtendItem;
 use Omnipay\Common\Message\AbstractRequest as OmnipayAbstractRequest;
-use Omnipay\SagePay\Traits\GatewayParamsTrait;
 use Omnipay\SagePay\ConstantsInterface;
+use Omnipay\SagePay\Extend\Item as ExtendItem;
+use Omnipay\SagePay\Traits\GatewayParamsTrait;
 use Psr\Http\Message\ResponseInterface;
+use SimpleXMLElement;
 
 abstract class AbstractRequest extends OmnipayAbstractRequest implements ConstantsInterface
 {
@@ -48,151 +50,19 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
-     * The name of the service used in the endpoint to send the message.
-     * For MANY services, the URL fragment will be the lower case version
-     * of the action.
-     *
-     * @return string Sage Pay endpoint service name.
-     */
-    public function getService()
-    {
-        return strtolower($this->getTxType());
-    }
-
-    /**
-     * If it is used, i.e. needed for an enpoint, then it must be defined.
-     *
-     * @return string the transaction type.
-     * @throws InvalidRequestException
-     */
-    public function getTxType()
-    {
-        throw new InvalidRequestException('Transaction type not defined.');
-    }
-
-    /**
-     * Basic authorisation, transaction type and protocol version.
-     *
-     * @return Array
-     */
-    protected function getBaseData()
-    {
-        $data = array();
-
-        $data['VPSProtocol'] = $this->VPSProtocol;
-        $data['TxType'] = $this->getTxType();
-        $data['Vendor'] = $this->getVendor();
-        $data['AccountType'] = $this->getAccountType() ?: static::ACCOUNT_TYPE_E;
-
-        // TODO: move this to getDerivedLanguage()
-
-        if ($language = $this->getLanguage()) {
-            // Although documented as ISO639, the gateway expects
-            // the code to be upper case.
-
-            $language = strtoupper($language);
-
-            // If a locale has been passed in instead, then just take the first part.
-            // e.g. both "en" and "en-gb" becomes "EN".
-
-            list($language) = preg_split('/[-_]/', $language);
-
-            $data['Language'] = $language;
-        }
-
-        return $data;
-    }
-
-    /**
-     * Get either the billing or the shipping address from
-     * the card object, mapped to Sage Pay field names.
-     *
-     * @param string $type 'Billing' or 'Shipping'
-     * @return array
-     */
-    protected function getAddressData($type = 'Billing')
-    {
-        $card = $this->getCard();
-
-        // Mapping is Sage Pay name => Omnipay Name
-
-        $mapping = [
-            'Firstnames'    => 'FirstName',
-            'Surname'       => 'LastName',
-            'Address1'      => 'Address1',
-            'Address2'      => 'Address2',
-            'City'          => 'City',
-            'PostCode'      => 'Postcode',
-            'State'         => 'State',
-            'Country'       => 'Country',
-            'Phone'         => 'Phone',
-        ];
-
-        $data = [];
-
-        foreach ($mapping as $sagepayName => $omnipayName) {
-            $data[$sagepayName] = call_user_func([$card, 'get' . $type . $omnipayName]);
-        }
-
-        // The state must not be set for non-US countries.
-
-        if ($data['Country'] !== 'US') {
-            $data['State'] = '';
-        }
-
-        return $data;
-    }
-
-    /**
-     * Add the billing address details to the data.
-     *
-     * @param array $data
-     * @return array $data
-     */
-    protected function getBillingAddressData(array $data = [])
-    {
-        $address = $this->getAddressData('Billing');
-
-        foreach ($address as $name => $value) {
-            $data['Billing' . $name] = $value;
-        }
-
-        return $data;
-    }
-
-    /**
-     * Add the delivery (shipping) address details to the data.
-     * Use the Billing address if the billingForShipping option is set.
-     *
-     * @param array $data
-     * @return array $data
-     */
-    protected function getDeliveryAddressData(array $data = [])
-    {
-        $address = $this->getAddressData(
-            (bool)$this->getBillingForShipping() ? 'Billing' : 'Shipping'
-        );
-
-        foreach ($address as $name => $value) {
-            $data['Delivery' . $name] = $value;
-        }
-
-        return $data;
-    }
-
-    /**
      * Send data to the remote gateway, parse the result into an array,
      * then use that to instantiate the response object.
      *
-     * @param  array
-     * @return Response The reponse object initialised with the data returned from the gateway.
+     * @param array
+     * @return Response The response object initialised with the data returned from the gateway.
+     * @throws InvalidRequestException
      */
     public function sendData($data)
     {
         // Issue #20 no data values should be null.
 
         array_walk($data, function (&$value) {
-            if (! isset($value)) {
+            if (!isset($value)) {
                 $value = '';
             }
         });
@@ -216,6 +86,43 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
+     * @return string URL for the test or live gateway, as appropriate.
+     * @throws InvalidRequestException
+     */
+    public function getEndpoint()
+    {
+        return sprintf(
+            '%s/%s.vsp',
+            $this->getTestMode() ? $this->testEndpoint : $this->liveEndpoint,
+            $this->getService()
+        );
+    }
+
+    /**
+     * The name of the service used in the endpoint to send the message.
+     * For MANY services, the URL fragment will be the lower case version
+     * of the action.
+     *
+     * @return string Sage Pay endpoint service name.
+     * @throws InvalidRequestException
+     */
+    public function getService()
+    {
+        return strtolower($this->getTxType());
+    }
+
+    /**
+     * If it is used, i.e. needed for an endpoint, then it must be defined.
+     *
+     * @return string the transaction type.
+     * @throws InvalidRequestException
+     */
+    public function getTxType()
+    {
+        throw new InvalidRequestException('Transaction type not defined.');
+    }
+
+    /**
      * The payload consists of name=>value pairs, each on a separate line.
      *
      * @param ResponseInterface $httpResponse
@@ -234,7 +141,7 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
         foreach ($lines as $line) {
             $line = explode('=', $line, 2);
 
-            if (! empty($line[0])) {
+            if (!empty($line[0])) {
                 $responseData[trim($line[0])] = isset($line[1]) ? trim($line[1]) : '';
             }
         }
@@ -243,15 +150,13 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
-     * @return string URL for the test or live gateway, as appropriate.
+     * Return the Response object, initialised with the parsed response data.
+     * @param array $data The data parsed from the response gateway body.
+     * @return Response
      */
-    public function getEndpoint()
+    protected function createResponse($data)
     {
-        return sprintf(
-            '%s/%s.vsp',
-            $this->getTestMode() ? $this->testEndpoint : $this->liveEndpoint,
-            $this->getService()
-        );
+        return $this->response = new Response($this, $data);
     }
 
     /**
@@ -286,6 +191,7 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
      * Set custom vendor data that will be stored against the gateway account.
      *
      * @param string $value ASCII alphanumeric and spaces, max 200 characters.
+     * @return AbstractRequest
      */
     public function setVendorData($value)
     {
@@ -293,32 +199,26 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
+     * Alias for setCreateToken()
+     * @param $value
+     * @return AbstractRequest
+     */
+    public function setCreateCard($value)
+    {
+        return $this->setCreateToken($value);
+    }
+
+    /**
      * Use this flag to indicate you wish to have a token generated and stored in the Sage Pay
      * database and returned to you for future use.
      * Values set in constants CREATE_TOKEN_*
      *
-     * @param bool|int $createToken 0 = This will not create a token from the payment (default).
+     * @param $value
      * @return $this
      */
     public function setCreateToken($value)
     {
         return $this->setParameter('createToken', $value);
-    }
-
-    /**
-     * @return int static::CREATE_TOKEN_YES or static::CREATE_TOKEN_NO
-     */
-    public function getCreateToken()
-    {
-        return $this->getParameter('createToken');
-    }
-
-    /**
-     * Alias for setCreateToken()
-     */
-    public function setCreateCard($value)
-    {
-        return $this->setCreateToken($value);
     }
 
     /**
@@ -330,9 +230,17 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
+     * @return int static::CREATE_TOKEN_YES or static::CREATE_TOKEN_NO
+     */
+    public function getCreateToken()
+    {
+        return $this->getParameter('createToken');
+    }
+
+    /**
      * An optional flag to indicate if you wish to continue to store the
      * Token in the SagePay token database for future use.
-     * Values set in contants SET_TOKEN_*
+     * Values set in constants SET_TOKEN_*
      *
      * Note: this is just an override method. It is best to leave this unset,
      * and use either setToken or setCardReference. This flag will then be
@@ -355,29 +263,11 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
-     * @param string the original VPS transaction ID; used to capture/void
-     * @return $this
-     */
-    public function setVpsTxId($value)
-    {
-        return $this->setParameter('vpsTxId', $value);
-    }
-
-    /**
      * @return string
      */
     public function getVpsTxId()
     {
         return $this->getParameter('vpsTxId');
-    }
-
-    /**
-     * @param string the original SecurityKey; used to capture/void
-     * @return $this
-     */
-    public function setSecurityKey($value)
-    {
-        return $this->setParameter('securityKey', $value);
     }
 
     /**
@@ -389,29 +279,11 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
-     * @param string the original txAuthNo; used to capture/void
-     * @return $this
-     */
-    public function setTxAuthNo($value)
-    {
-        return $this->setParameter('txAuthNo', $value);
-    }
-
-    /**
      * @return string
      */
     public function getTxAuthNo()
     {
         return $this->getParameter('txAuthNo');
-    }
-
-    /**
-     * @param string the original txAuthNo; used to capture/void
-     * @return $this
-     */
-    public function setRelatedTransactionId($value)
-    {
-        return $this->setParameter('relatedTransactionId', $value);
     }
 
     /**
@@ -436,8 +308,8 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
      *
      * Values defined in static::ALLOW_GIFT_AID_* constant.
      *
-     * @param bool|int $allowGiftAid value that casts to boolean
-     * @return $this
+     * @param $value
+     * @return void
      */
     public function setAllowGiftAid($value)
     {
@@ -445,68 +317,182 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
-     * Return the Response object, initialised with the parsed response data.
-     * @param  array $data The data parsed from the response gateway body.
-     * @return Response
+     * A JSON transactionReference passed in is split into its
+     * component parts.
+     *
+     * @param string $value original transactionReference in JSON format.
+     * @return OmnipayAbstractRequest
      */
-    protected function createResponse($data)
+    public function setTransactionReference($value)
     {
-        return $this->response = new Response($this, $data);
+        $reference = json_decode($value, true);
+
+        if (json_last_error() === 0) {
+            if (isset($reference['VendorTxCode'])) {
+                $this->setRelatedTransactionId($reference['VendorTxCode']);
+            }
+
+            if (isset($reference['VPSTxId'])) {
+                $this->setVpsTxId($reference['VPSTxId']);
+            }
+
+            if (isset($reference['SecurityKey'])) {
+                $this->setSecurityKey($reference['SecurityKey']);
+            }
+
+            if (isset($reference['TxAuthNo'])) {
+                $this->setTxAuthNo($reference['TxAuthNo']);
+            }
+        }
+
+        return parent::setTransactionReference($value);
     }
 
     /**
-     * Filters out any characters that SagePay does not support from the item name.
-     *
-     * Believe it or not, SagePay actually have separate rules for allowed characters
-     * for item names and discount names, hence the need for two separate methods.
-     *
-     * @param string $name
-     * @return string
+     * @param string the original txAuthNo; used to capture/void
+     * @return $this
      */
-    protected function filterItemName($name)
+    public function setRelatedTransactionId($value)
     {
-        $standardChars = '0-9a-zA-Z';
-        $allowedSpecialChars = " +'/\\&:,.-{}";
-        $pattern = '`[^'.$standardChars.preg_quote($allowedSpecialChars, '/').']`';
-        $name = trim(substr(preg_replace($pattern, '', $name), 0, 100));
-
-        return $name;
+        return $this->setParameter('relatedTransactionId', $value);
     }
 
     /**
-     * Filters out any characters that SagePay does not support from the item name for
-     * the non-xml basket integration
-     *
-     * @param string $name
-     * @return string
+     * @param string the original VPS transaction ID; used to capture/void
+     * @return $this
      */
-    protected function filterNonXmlItemName($name)
+    public function setVpsTxId($value)
     {
-        $standardChars = '0-9a-zA-Z';
-        $allowedSpecialChars = " +'/\\,.-{};_@()^\"~$=!#?|[]";
-        $pattern = '`[^'.$standardChars.preg_quote($allowedSpecialChars, '/').']`';
-        $name = trim(substr(preg_replace($pattern, '', $name), 0, 100));
-
-        return $name;
+        return $this->setParameter('vpsTxId', $value);
     }
 
     /**
-     * Filters out any characters that SagePay does not support from the discount name.
-     *
-     * Believe it or not, SagePay actually have separate rules for allowed characters
-     * for item names and discount names, hence the need for two separate methods.
-     *
-     * @param string $name
-     * @return string
+     * @param string the original SecurityKey; used to capture/void
+     * @return $this
      */
-    protected function filterDiscountName($name)
+    public function setSecurityKey($value)
     {
-        $standardChars = "0-9a-zA-Z";
-        $allowedSpecialChars = " +'/\\:,.-{};_@()^\"~[]$=!#?|";
-        $pattern = '`[^'.$standardChars.preg_quote($allowedSpecialChars, '/').']`';
-        $name = trim(substr(preg_replace($pattern, '', $name), 0, 100));
+        return $this->setParameter('securityKey', $value);
+    }
 
-        return $name;
+    /**
+     * @param string the original txAuthNo; used to capture/void
+     * @return $this
+     */
+    public function setTxAuthNo($value)
+    {
+        return $this->setParameter('txAuthNo', $value);
+    }
+
+    /**
+     * Basic authorisation, transaction type and protocol version.
+     *
+     * @return array
+     * @throws InvalidRequestException
+     */
+    protected function getBaseData()
+    {
+        $data = array();
+
+        $data['VPSProtocol'] = $this->VPSProtocol;
+        $data['TxType'] = $this->getTxType();
+        $data['Vendor'] = $this->getVendor();
+        $data['AccountType'] = $this->getAccountType() ?: static::ACCOUNT_TYPE_E;
+
+        // TODO: move this to getDerivedLanguage()
+
+        if ($language = $this->getLanguage()) {
+            // Although documented as ISO639, the gateway expects
+            // the code to be upper case.
+
+            $language = strtoupper($language);
+
+            // If a locale has been passed in instead, then just take the first part.
+            // e.g. both "en" and "en-gb" becomes "EN".
+
+            list($language) = preg_split('/[-_]/', $language);
+
+            $data['Language'] = $language;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Add the billing address details to the data.
+     *
+     * @param array $data
+     * @return array $data
+     */
+    protected function getBillingAddressData(array $data = [])
+    {
+        $address = $this->getAddressData('Billing');
+
+        foreach ($address as $name => $value) {
+            $data['Billing' . $name] = $value;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Get either the billing or the shipping address from
+     * the card object, mapped to Sage Pay field names.
+     *
+     * @param string $type 'Billing' or 'Shipping'
+     * @return array
+     */
+    protected function getAddressData($type = 'Billing')
+    {
+        $card = $this->getCard();
+
+        // Mapping is Sage Pay name => Omnipay Name
+
+        $mapping = [
+            'Firstnames' => 'FirstName',
+            'Surname' => 'LastName',
+            'Address1' => 'Address1',
+            'Address2' => 'Address2',
+            'City' => 'City',
+            'PostCode' => 'Postcode',
+            'State' => 'State',
+            'Country' => 'Country',
+            'Phone' => 'Phone',
+        ];
+
+        $data = [];
+
+        foreach ($mapping as $sagepayName => $omnipayName) {
+            $data[$sagepayName] = call_user_func([$card, 'get' . $type . $omnipayName]);
+        }
+
+        // The state must not be set for non-US countries.
+
+        if ($data['Country'] !== 'US') {
+            $data['State'] = '';
+        }
+
+        return $data;
+    }
+
+    /**
+     * Add the delivery (shipping) address details to the data.
+     * Use the Billing address if the billingForShipping option is set.
+     *
+     * @param array $data
+     * @return array $data
+     */
+    protected function getDeliveryAddressData(array $data = [])
+    {
+        $address = $this->getAddressData(
+            (bool)$this->getBillingForShipping() ? 'Billing' : 'Shipping'
+        );
+
+        foreach ($address as $name => $value) {
+            $data['Delivery' . $name] = $value;
+        }
+
+        return $data;
     }
 
     /**
@@ -524,7 +510,7 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
             return $result;
         }
 
-        $xml = new \SimpleXMLElement('<basket/>');
+        $xml = new SimpleXMLElement('<basket/>');
         $cartHasDiscounts = false;
 
         foreach ($items as $basketItem) {
@@ -565,6 +551,44 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
         }
 
         return $result;
+    }
+
+    /**
+     * Filters out any characters that SagePay does not support from the item name.
+     *
+     * Believe it or not, SagePay actually have separate rules for allowed characters
+     * for item names and discount names, hence the need for two separate methods.
+     *
+     * @param string $name
+     * @return string
+     */
+    protected function filterItemName($name)
+    {
+        $standardChars = '0-9a-zA-Z';
+        $allowedSpecialChars = " +'/\\&:,.-{}";
+        $pattern = '`[^' . $standardChars . preg_quote($allowedSpecialChars, '/') . ']`';
+        $name = trim(substr(preg_replace($pattern, '', $name), 0, 100));
+
+        return $name;
+    }
+
+    /**
+     * Filters out any characters that SagePay does not support from the discount name.
+     *
+     * Believe it or not, SagePay actually have separate rules for allowed characters
+     * for item names and discount names, hence the need for two separate methods.
+     *
+     * @param string $name
+     * @return string
+     */
+    protected function filterDiscountName($name)
+    {
+        $standardChars = "0-9a-zA-Z";
+        $allowedSpecialChars = " +'/\\:,.-{};_@()^\"~[]$=!#?|";
+        $pattern = '`[^' . $standardChars . preg_quote($allowedSpecialChars, '/') . ']`';
+        $name = trim(substr(preg_replace($pattern, '', $name), 0, 100));
+
+        return $name;
     }
 
     /**
@@ -619,33 +643,19 @@ abstract class AbstractRequest extends OmnipayAbstractRequest implements Constan
     }
 
     /**
-     * A JSON transactionReference passed in is split into its
-     * component parts.
+     * Filters out any characters that SagePay does not support from the item name for
+     * the non-xml basket integration
      *
-     * @param string $value original transactionReference in JSON format.
+     * @param string $name
+     * @return string
      */
-    public function setTransactionReference($value)
+    protected function filterNonXmlItemName($name)
     {
-        $reference = json_decode($value, true);
+        $standardChars = '0-9a-zA-Z';
+        $allowedSpecialChars = " +'/\\,.-{};_@()^\"~$=!#?|[]";
+        $pattern = '`[^' . $standardChars . preg_quote($allowedSpecialChars, '/') . ']`';
+        $name = trim(substr(preg_replace($pattern, '', $name), 0, 100));
 
-        if (json_last_error() === 0) {
-            if (isset($reference['VendorTxCode'])) {
-                $this->setRelatedTransactionId($reference['VendorTxCode']);
-            }
-
-            if (isset($reference['VPSTxId'])) {
-                $this->setVpsTxId($reference['VPSTxId']);
-            }
-
-            if (isset($reference['SecurityKey'])) {
-                $this->setSecurityKey($reference['SecurityKey']);
-            }
-
-            if (isset($reference['TxAuthNo'])) {
-                $this->setTxAuthNo($reference['TxAuthNo']);
-            }
-        }
-
-        return parent::setTransactionReference($value);
+        return $name;
     }
 }
