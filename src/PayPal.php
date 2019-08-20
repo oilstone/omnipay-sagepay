@@ -1,7 +1,8 @@
 <?php
 
-namespace Omnipay\Common;
+namespace Omnipay\SagePay;
 
+use Omnipay\Common\CreditCard;
 use Omnipay\Common\Exception\InvalidCreditCardException;
 
 /**
