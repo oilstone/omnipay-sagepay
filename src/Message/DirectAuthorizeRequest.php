@@ -5,12 +5,11 @@ namespace Omnipay\SagePay\Message;
 use Omnipay\Common\CreditCard;
 use Omnipay\Common\Exception\InvalidCreditCardException;
 use Omnipay\Common\Exception\InvalidRequestException;
-use Omnipay\Common\PayPal;
+use Omnipay\SagePay\PayPal;
 
 /**
  * Sage Pay Direct Authorize Request
  */
-
 class DirectAuthorizeRequest extends AbstractRequest
 {
     /**
@@ -33,10 +32,56 @@ class DirectAuthorizeRequest extends AbstractRequest
         }
     }
 
+    /**
+     * @return string
+     */
     public function getService()
     {
         return static::SERVICE_DIRECT_REGISTER;
     }
+
+    /**
+     * @param $value
+     * @return DirectAuthorizeRequest
+     */
+    public function setCardholderName($value)
+    {
+        return $this->setParameter('cardholderName', $value);
+    }
+
+    /**
+     * Add the credit card or token details to the data.
+     * @throws InvalidCreditCardException
+     * @throws InvalidRequestException
+     */
+    public function getData()
+    {
+        $data = $this->getBaseAuthorizeData();
+
+        if ($this->getToken() || $this->getCardReference()) {
+            // If using a token, then set that data.
+            $data = $this->getTokenData($data);
+        } else {
+            // Otherwise, a credit card has to have been provided.
+            $data = $this->getCardData($data);
+        }
+
+        // A CVV may be supplied whether using a token or credit card details.
+        // On *first* use of a token for which a CVV was provided, that CVV will
+        // be used when making a transaction. The CVV will then be deleted by the
+        // gateway. For each *reuse* of a cardReference, a new CVV must be provided,
+        // if the security rules require it.
+
+        if ($this->getCard()->getCvv() !== null) {
+            $data['CV2'] = $this->getCard()->getCvv();
+        }
+
+        return $data;
+    }
+
+    /*
+     * Set cardholder name directly, overriding the billing name and surname of the card.
+     */
 
     /**
      * The required fields concerning what is being authorised and who
@@ -117,24 +162,19 @@ class DirectAuthorizeRequest extends AbstractRequest
         $ip = parent::getClientIp();
 
         // OmniPay core could do with a helper for this.
-        if (! preg_match('/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/', $ip)) {
+        if (!preg_match('/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/', $ip)) {
             $ip = null;
         }
 
         return $ip;
     }
 
-    /*
-     * Set cardholder name directly, overriding the billing name and surname of the card.
+    /**
+     * @return string The XML surcharge data as set.
      */
-    public function setCardholderName($value)
+    public function getSurchargeXml()
     {
-        return $this->setParameter('cardholderName', $value);
-    }
-
-    public function getCardholderName()
-    {
-        return $this->getParameter('cardholderName');
+        return $this->getParameter('surchargeXml');
     }
 
     /**
@@ -203,7 +243,7 @@ class DirectAuthorizeRequest extends AbstractRequest
 
         $data['CardType'] = $this->getCardBrand();
 
-        if($this->isPayPalPayment()) {
+        if ($this->isPayPalPayment()) {
             $data['PayPalCallbackURL'] = $card->getCallbackUrl();
 
             return $data;
@@ -216,7 +256,7 @@ class DirectAuthorizeRequest extends AbstractRequest
         }
 
         // Card number should not be provided if token is being provided instead
-        if (! $this->getToken()) {
+        if (!$this->getToken()) {
             $data['CardNumber'] = $card->getNumber();
         }
 
@@ -248,36 +288,6 @@ class DirectAuthorizeRequest extends AbstractRequest
     }
 
     /**
-     * Add the credit card or token details to the data.
-     * @throws InvalidCreditCardException
-     * @throws InvalidRequestException
-     */
-    public function getData()
-    {
-        $data = $this->getBaseAuthorizeData();
-
-        if ($this->getToken() || $this->getCardReference()) {
-            // If using a token, then set that data.
-            $data = $this->getTokenData($data);
-        } else {
-            // Otherwise, a credit card has to have been provided.
-            $data = $this->getCardData($data);
-        }
-
-        // A CVV may be supplied whether using a token or credit card details.
-        // On *first* use of a token for which a CVV was provided, that CVV will
-        // be used when making a transaction. The CVV will then be deleted by the
-        // gateway. For each *reuse* of a cardReference, a new CVV must be provided,
-        // if the security rules require it.
-
-        if ($this->getCard()->getCvv() !== null) {
-            $data['CV2'] = $this->getCard()->getCvv();
-        }
-
-        return $data;
-    }
-
-    /**
      * @return string Get the card brand in a format expected by Sage Pay.
      */
     protected function getCardBrand()
@@ -302,6 +312,14 @@ class DirectAuthorizeRequest extends AbstractRequest
     }
 
     /**
+     * @return mixed
+     */
+    public function getCardholderName()
+    {
+        return $this->getParameter('cardholderName');
+    }
+
+    /**
      * Set the raw surcharge XML field.
      *
      * @param string $surchargeXml The XML data formatted as per Sage Pay documentation.
@@ -310,13 +328,5 @@ class DirectAuthorizeRequest extends AbstractRequest
     public function setSurchargeXml($surchargeXml)
     {
         return $this->setParameter('surchargeXml', $surchargeXml);
-    }
-
-    /**
-     * @return string The XML surcharge data as set.
-     */
-    public function getSurchargeXml()
-    {
-        return $this->getParameter('surchargeXml');
     }
 }
