@@ -16,13 +16,25 @@
     "license": "MIT",
     "authors": [
         {
+            "name": "Adrian Macneil",
+            "email": "adrian@adrianmacneil.com"
+        },
+        {
+            "name": "Jason Judge",
+            "email": "jason.judge@academe.co.uk"
+        },
+        {
+            "name": "Omnipay Contributors",
+            "homepage": "https://github.com/thephpleague/omnipay-sagepay/contributors"
+        },
+        {
             "name": "Online Solutions",
             "email": "support@onlinesolutionsltd.com"
         }
     ],
     "autoload": {
         "psr-4": {
-            "Omnipay\\SagePay\\" : "src/"
+            "Omnipay\\SagePay\\": "src/"
         }
     },
     "require": {
